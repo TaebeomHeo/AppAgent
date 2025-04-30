@@ -1,7 +1,7 @@
 MODEL: 'OpenAI' # The type of multi-modal LLM you would like to use to power the AppAgent, must be either OpenAI or Qwen
 
 OPENAI_API_BASE: 'https://api.openai.com/v1/chat/completions'
-OPENAI_API_KEY: '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' # Set the value to sk-xxx if you host the openai interface for open llm model
+OPENAI_API_KEY: 'sk' # Set the value to sk-xxx if you host the openai interface for open llm model
 # OPENAI_API_MODEL: "gpt-4-vision-preview"  # The only OpenAI model by now that accepts visual input
 # OPENAI_API_MODEL: "gpt-4-vision-preview"  # The only OpenAI model by now that accepts visual input
 OPENAI_API_MODEL: 'gpt-4o' # The only OpenAI model by now that accepts visual input

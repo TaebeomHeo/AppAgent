@@ -3,3 +3,4 @@
 apps/
 scripts/__pycache__/
 tasks/
+config.yaml
