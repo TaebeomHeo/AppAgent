@@ -12,6 +12,7 @@ from config import load_config
 from and_controller import list_all_devices, AndroidController, traverse_tree
 from model import parse_explore_rsp, parse_reflect_rsp, OpenAIModel, QwenModel
 from utils import print_with_color, draw_bbox_multi
+from action_logger import log_action
 
 arg_desc = "AppAgent - Autonomous Exploration"
 parser = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter, description=arg_desc)
@@ -141,34 +142,51 @@ while round_count < configs["MAX_ROUNDS"]:
             break
         if act_name == "tap":
             _, area = res
-            tl, br = elem_list[area - 1].bbox
+            element = elem_list[area - 1]
+            tl, br = element.bbox
             x, y = (tl[0] + br[0]) // 2, (tl[1] + br[1]) // 2
             ret = controller.tap(x, y)
             if ret == "ERROR":
                 print_with_color("ERROR: tap execution failed", "red")
                 break
+            
+            # 액션 로그 생성 및 저장
+            log_action(task_dir, round_count, "tap", element, app, root_dir, "success" if ret != "ERROR" else "failed")
         elif act_name == "text":
             _, input_str = res
+            element = elem_list[0]  # text 입력은 첫 번째 요소를 사용
             ret = controller.text(input_str)
             if ret == "ERROR":
                 print_with_color("ERROR: text execution failed", "red")
                 break
+            
+            # 액션 로그 생성 및 저장
+            log_action(task_dir, round_count, "text", element, app, root_dir, "success" if ret != "ERROR" else "failed", input_text=input_str)
         elif act_name == "long_press":
             _, area = res
-            tl, br = elem_list[area - 1].bbox
+            element = elem_list[area - 1]
+            tl, br = element.bbox
             x, y = (tl[0] + br[0]) // 2, (tl[1] + br[1]) // 2
             ret = controller.long_press(x, y)
             if ret == "ERROR":
                 print_with_color("ERROR: long press execution failed", "red")
                 break
+            
+            # 액션 로그 생성 및 저장
+            log_action(task_dir, round_count, "long_press", element, app, root_dir, "success" if ret != "ERROR" else "failed")
         elif act_name == "swipe":
             _, area, swipe_dir, dist = res
-            tl, br = elem_list[area - 1].bbox
+            element = elem_list[area - 1]
+            tl, br = element.bbox
             x, y = (tl[0] + br[0]) // 2, (tl[1] + br[1]) // 2
             ret = controller.swipe(x, y, swipe_dir, dist)
             if ret == "ERROR":
                 print_with_color("ERROR: swipe execution failed", "red")
                 break
+            
+            # 액션 로그 생성 및 저장
+            log_action(task_dir, round_count, "swipe", element, app, root_dir, "success" if ret != "ERROR" else "failed", 
+                      direction=swipe_dir, distance=dist)
         else:
             break
         time.sleep(configs["REQUEST_INTERVAL"])

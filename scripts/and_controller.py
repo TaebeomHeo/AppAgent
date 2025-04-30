@@ -80,7 +80,7 @@ def traverse_tree(xml_path, elem_list, attrib, add_index=False):
                         close = True
                         break
                 if not close:
-                    elem_list.append(AndroidElement(elem_id, ((x1, y1), (x2, y2)), attrib))
+                    elem_list.append(AndroidElement(elem_id, ((x1, y1), (x2, y2)), elem.attrib))
 
         if event == 'end':
             path.pop()

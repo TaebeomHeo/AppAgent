@@ -6,12 +6,18 @@ import os
 import re
 import sys
 import time
+import xml.etree.ElementTree as ET
 
 import prompts
 from config import load_config
 from and_controller import list_all_devices, AndroidController, traverse_tree
 from model import parse_explore_rsp, parse_grid_rsp, OpenAIModel, QwenModel
 from utils import print_with_color, draw_bbox_multi, draw_grid
+from appium import webdriver
+from appium.webdriver.common.mobileby import MobileBy
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from action_logger import log_action
 
 arg_desc = "AppAgent Executor"
 parser = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter, description=arg_desc)
@@ -225,34 +231,51 @@ while round_count < configs["MAX_ROUNDS"]:
         res = res[:-1]
         if act_name == "tap":
             _, area = res
-            tl, br = elem_list[area - 1].bbox
+            element = elem_list[area - 1]
+            tl, br = element.bbox
             x, y = (tl[0] + br[0]) // 2, (tl[1] + br[1]) // 2
             ret = controller.tap(x, y)
             if ret == "ERROR":
                 print_with_color("ERROR: tap execution failed", "red")
                 break
+            
+            # 액션 로그 생성 및 저장
+            log_action(xml_path, round_count, "tap", element, app, root_dir, "success" if ret != "ERROR" else "failed")
         elif act_name == "text":
             _, input_str = res
+            element = elem_list[0]  # text 입력은 첫 번째 요소를 사용
             ret = controller.text(input_str)
             if ret == "ERROR":
                 print_with_color("ERROR: text execution failed", "red")
                 break
+            
+            # 액션 로그 생성 및 저장
+            log_action(xml_path, round_count, "text", element, app, root_dir, "success" if ret != "ERROR" else "failed", input_text=input_str)
         elif act_name == "long_press":
             _, area = res
-            tl, br = elem_list[area - 1].bbox
+            element = elem_list[area - 1]
+            tl, br = element.bbox
             x, y = (tl[0] + br[0]) // 2, (tl[1] + br[1]) // 2
             ret = controller.long_press(x, y)
             if ret == "ERROR":
                 print_with_color("ERROR: long press execution failed", "red")
                 break
+            
+            # 액션 로그 생성 및 저장
+            log_action(xml_path, round_count, "long_press", element, app, root_dir, "success" if ret != "ERROR" else "failed")
         elif act_name == "swipe":
             _, area, swipe_dir, dist = res
-            tl, br = elem_list[area - 1].bbox
+            element = elem_list[area - 1]
+            tl, br = element.bbox
             x, y = (tl[0] + br[0]) // 2, (tl[1] + br[1]) // 2
             ret = controller.swipe(x, y, swipe_dir, dist)
             if ret == "ERROR":
                 print_with_color("ERROR: swipe execution failed", "red")
                 break
+            
+            # 액션 로그 생성 및 저장
+            log_action(xml_path, round_count, "swipe", element, app, root_dir, "success" if ret != "ERROR" else "failed", 
+                      direction=swipe_dir, distance=dist)
         elif act_name == "grid":
             grid_on = True
         elif act_name == "tap_grid" or act_name == "long_press_grid":
@@ -289,3 +312,134 @@ elif round_count == configs["MAX_ROUNDS"]:
     print_with_color("Task finished due to reaching max rounds", "yellow")
 else:
     print_with_color("Task finished unexpectedly", "red")
+
+class TestReplay:
+    def setup_method(self):
+        caps = {
+            'platformName': 'Android',
+            'automationName': 'UiAutomator2',
+            'deviceName': 'Android Device'
+        }
+        self.driver = webdriver.Remote('http://localhost:4723/wd/hub', caps)
+
+    def find_element_with_fallback(self, element_info):
+        """여러 방법으로 요소 찾기 시도"""
+        try:
+            # 1. resource-id로 시도
+            if element_info["resource_id"]:
+                return self.driver.find_element(MobileBy.ID, element_info["resource_id"])
+        except:
+            try:
+                # 2. content-desc로 시도
+                if element_info["content_desc"]:
+                    return self.driver.find_element(MobileBy.ACCESSIBILITY_ID, 
+                                                  element_info["content_desc"])
+            except:
+                try:
+                    # 3. class와 bounds로 시도
+                    xpath = f"//{element_info['class_name']}[@bounds='{element_info['bounds']}']"
+                    return self.driver.find_element(MobileBy.XPATH, xpath)
+                except:
+                    # 4. 좌표로 마지막 시도
+                    return None
+
+    def execute_action(self, action_info, element=None):
+        """액션 실행"""
+        if action_info["type"] == "tap":
+            if element:
+                element.click()
+            else:
+                x, y = action_info["parameters"]["coordinates"]
+                self.driver.tap([(x, y)])
+        elif action_info["type"] == "swipe":
+            params = action_info["parameters"]
+            self.driver.swipe(params["start_coordinates"][0],
+                            params["start_coordinates"][1],
+                            params["direction"],
+                            params["distance"])
+        # ... 다른 액션들
+
+    def test_replay(self):
+        """로그 파일 재생"""
+        with open('action_log.json') as f:
+            log_data = json.load(f)
+
+        for step in log_data["steps"]:
+            # 현재 화면 확인
+            WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((MobileBy.XPATH, "//*"))
+            )
+
+            # 요소 찾기
+            element = self.find_element_with_fallback(step["element"])
+            
+            # 액션 실행
+            self.execute_action(step["action"], element)
+
+            # 결과 검증
+            assert step["action"]["status"] == "success"
+
+def create_action_log(xml_path, action_type, element, status="success"):
+    """액션 로그 생성"""
+    log_entry = {
+        "timestamp": datetime.datetime.now().isoformat(),
+        "screen": {
+            "xml_path": xml_path,
+            "screen_name": get_screen_name(xml_path),  # XML 분석해서 현재 화면 이름 추출
+        },
+        "element": {
+            "index": element.index if hasattr(element, 'index') else None,
+            "resource_id": element.attrib.get("resource-id", ""),
+            "class_name": element.attrib.get("class", ""),
+            "content_desc": element.attrib.get("content-desc", ""),
+            "bounds": element.attrib.get("bounds", ""),
+            "clickable": element.attrib.get("clickable", ""),
+            "scrollable": element.attrib.get("scrollable", ""),
+            "focused": element.attrib.get("focused", ""),
+        },
+        "action": {
+            "type": action_type,  # tap, swipe, text, long_press
+            "parameters": get_action_parameters(action_type, element),
+            "status": status
+        }
+    }
+    return log_entry
+
+def get_screen_name(xml_path):
+    """XML 분석해서 현재 화면 이름 추출"""
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
+    # 예: 패키지명이나 activity 이름으로 화면 구분
+    package = root.attrib.get("package", "")
+    activity = root.attrib.get("activity", "")
+    return f"{package}.{activity}"
+
+def get_action_parameters(action_type, element):
+    """액션 타입별 파라미터 생성"""
+    if action_type == "tap":
+        return {
+            "coordinates": get_element_center(element.attrib["bounds"])
+        }
+    elif action_type == "swipe":
+        return {
+            "start_coordinates": get_element_center(element.attrib["bounds"]),
+            "direction": element.swipe_direction,
+            "distance": element.swipe_distance
+        }
+    elif action_type == "text":
+        return {
+            "input_text": element.input_text
+        }
+    elif action_type == "long_press":
+        return {
+            "coordinates": get_element_center(element.attrib["bounds"]),
+            "duration": 1000  # milliseconds
+        }
+    return {}
+
+def get_element_center(bounds_str):
+    """요소의 중앙 좌표 계산"""
+    bounds = bounds_str[1:-1].split("][")
+    x1, y1 = map(int, bounds[0].split(","))
+    x2, y2 = map(int, bounds[1].split(","))
+    return [(x1 + x2) // 2, (y1 + y2) // 2]
